@@ -273,10 +273,12 @@ AllowedIPs = 0.0.0.0/0
 Endpoint = $DOMAIN:$AWG_PORT
 PersistentKeepalive = 25"
 
-# Случайное имя файла — приватный ключ не должен лежать по предсказуемому URL
+# Случайное имя файла — приватный ключ не должен лежать по предсказуемому URL.
+# Защита здесь — неугадываемый путь (как у $path_subpage.html), а не права:
+# файл обязан быть читаем nginx (www-data), иначе скачивание вернёт 403.
 awg_conf_name=$(openssl rand -base64 15 | tr -dc 'A-Za-z0-9' | head -c 20)
 echo "$AWG_CLIENT_CONF" > "$WEB_PATH/${awg_conf_name}.conf"
-chmod 600 "$WEB_PATH/${awg_conf_name}.conf"
+chmod 644 "$WEB_PATH/${awg_conf_name}.conf"
 
 # Hysteria2 ссылка (стандартный формат; диапазон портов через mport)
 HY_LINK="hysteria2://${HY_PASS}@${DOMAIN}:${HOP_START}-${HOP_END}/?obfs=salamander&obfs-password=${HY_OBFS}&sni=${DOMAIN}#autoXRAY-UDP-Hysteria2"
