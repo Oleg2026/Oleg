@@ -108,6 +108,7 @@ server {
     location / { return 301 https://\$host\$request_uri; }
 }
 NGINXEOF
+nginx -t || { echo -e "${RED}❌ Конфиг nginx невалиден${NC}"; exit 1; }
 systemctl restart nginx
 
 # --- Task 4: генерация секретов и обфускации ---
@@ -139,6 +140,7 @@ while [ "$AWG_H4" = "$AWG_H1" ] || [ "$AWG_H4" = "$AWG_H2" ] || [ "$AWG_H4" = "$
 
 # --- Task 5: NAT и форвардинг ---
 WAN_IF=$(ip route get 8.8.8.8 | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')
+[ -n "$WAN_IF" ] || { echo -e "${RED}❌ Не удалось определить WAN-интерфейс${NC}"; exit 1; }
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/998-autoXRAY-fwd.conf
 sysctl --system
 
@@ -151,7 +153,7 @@ apt-get install -y "linux-headers-$(uname -r)" dkms || true
 
 # amneziawg-tools (awg, awg-quick) из исходников
 if ! command -v awg >/dev/null 2>&1; then
-    git clone https://github.com/amnezia-vpn/amneziawg-tools /opt/amneziawg-tools
+    [ -d /opt/amneziawg-tools ] || git clone https://github.com/amnezia-vpn/amneziawg-tools /opt/amneziawg-tools
     make -C /opt/amneziawg-tools/src -j"$(nproc)"
     make -C /opt/amneziawg-tools/src install
 fi
@@ -159,7 +161,7 @@ fi
 # Модуль ядра через DKMS
 AWG_MODULE_OK=0
 if [ -d "/usr/src/linux-headers-$(uname -r)" ] || [ -d "/lib/modules/$(uname -r)/build" ]; then
-    git clone https://github.com/amnezia-vpn/amneziawg-linux-kernel-module /opt/amneziawg-module || true
+    [ -d /opt/amneziawg-module ] || git clone https://github.com/amnezia-vpn/amneziawg-linux-kernel-module /opt/amneziawg-module || true
     if [ -d /opt/amneziawg-module/src ]; then
         make -C /opt/amneziawg-module/src -j"$(nproc)" && \
             make -C /opt/amneziawg-module/src install && \
@@ -174,14 +176,13 @@ if [ "$AWG_MODULE_OK" -ne 1 ]; then
     if ! command -v go >/dev/null 2>&1; then
         apt-get install -y golang-go || { echo -e "${RED}Не удалось поставить Go${NC}"; }
     fi
-    git clone https://github.com/amnezia-vpn/amneziawg-go /opt/amneziawg-go
+    [ -d /opt/amneziawg-go ] || git clone https://github.com/amnezia-vpn/amneziawg-go /opt/amneziawg-go
     ( cd /opt/amneziawg-go && go build -o /usr/bin/amneziawg-go . )
     export WG_QUICK_USERSPACE_IMPLEMENTATION=amneziawg-go
 fi
 
 # Ключи сервера/клиента + awg0.conf
 mkdir -p /etc/amnezia/amneziawg
-umask 077
 AWG_SRV_PRIV=$(awg genkey)
 AWG_SRV_PUB=$(echo "$AWG_SRV_PRIV" | awg pubkey)
 AWG_CLI_PRIV=$(awg genkey)
@@ -208,13 +209,14 @@ PostDown = iptables -t nat -D POSTROUTING -o $WAN_IF -j MASQUERADE
 PublicKey = $AWG_CLI_PUB
 AllowedIPs = 10.13.13.2/32
 EOF
+chmod 600 /etc/amnezia/amneziawg/awg0.conf
 
 systemctl enable --now awg-quick@awg0 || awg-quick up awg0
 
 # --- Task 7: установка Hysteria2 (запиннена) + конфиг + systemd + port-hopping ---
 HY_VERSION="v2.6.0"   # ПИН: обновлять вручную; не latest
 echo -e "${YEL}Установка Hysteria2 $HY_VERSION...${NC}"
-bash <(curl -fsSL https://get.hy2.sh/) --version "$HY_VERSION"
+bash <(curl -fsSL https://get.hy2.sh/) --version "$HY_VERSION" || { echo -e "${RED}❌ Установка Hysteria2 не удалась${NC}"; exit 1; }
 
 # Конфиг сервера Hysteria2
 cat > /etc/hysteria/config.yaml <<EOF
@@ -239,6 +241,7 @@ masquerade:
     url: https://$DOMAIN/
     rewriteHost: true
 EOF
+chmod 600 /etc/hysteria/config.yaml
 
 systemctl enable --now hysteria-server
 
@@ -248,7 +251,6 @@ iptables -t nat -C PREROUTING -i "$WAN_IF" -p udp --dport "${HOP_START}:${HOP_EN
 netfilter-persistent save
 
 # --- Task 8: клиентские артефакты — AmneziaWG .conf, hysteria2:// ссылка ---
-SERVER_PUB_IP="$LOCAL_IP"
 
 # Клиентский конфиг AmneziaWG (.conf) — параметры обфускации идентичны серверу
 AWG_CLIENT_CONF="[Interface]
@@ -271,7 +273,10 @@ AllowedIPs = 0.0.0.0/0
 Endpoint = $DOMAIN:$AWG_PORT
 PersistentKeepalive = 25"
 
-echo "$AWG_CLIENT_CONF" > "$WEB_PATH/awg-client.conf"
+# Случайное имя файла — приватный ключ не должен лежать по предсказуемому URL
+awg_conf_name=$(openssl rand -base64 15 | tr -dc 'A-Za-z0-9' | head -c 20)
+echo "$AWG_CLIENT_CONF" > "$WEB_PATH/${awg_conf_name}.conf"
+chmod 600 "$WEB_PATH/${awg_conf_name}.conf"
 
 # Hysteria2 ссылка (стандартный формат; диапазон портов через mport)
 HY_LINK="hysteria2://${HY_PASS}@${DOMAIN}:${HOP_START}-${HOP_END}/?obfs=salamander&obfs-password=${HY_OBFS}&sni=${DOMAIN}#autoXRAY-UDP-Hysteria2"
@@ -317,7 +322,7 @@ cat >> "$WEB_PATH/$path_subpage.html" <<EOF
     <button class="btn-action qr-btn" onclick="showQR('awg')">QR</button>
 </div>
 <div class="btn-group">
-    <a href="/awg-client.conf" download class="btn download">⬇️ Скачать awg-client.conf</a>
+    <a href="/${awg_conf_name}.conf" download class="btn download">⬇️ Скачать конфиг AmneziaWG</a>
 </div>
 
 <div><a style="color:white;margin:40px auto 20px;display:block;text-align:center;" href="https://github.com/xVRVx/autoXRAY">https://github.com/xVRVx/autoXRAY</a></div>
@@ -341,7 +346,7 @@ ${GRN}Готово.${NC}
 Страница подписки: https://$DOMAIN/$path_subpage.html
 
 Hysteria2:  $HY_LINK
-AmneziaWG:  https://$DOMAIN/awg-client.conf  (или QR на странице)
+AmneziaWG:  https://$DOMAIN/${awg_conf_name}.conf  (или QR на странице)
 
 ${YEL}ВАЖНО про UDP:${NC} если у оператора режется UDP — Hysteria2 пробует диапазон
 $HOP_START-$HOP_END (port-hopping). Если всё равно не идёт, расширьте диапазон в
