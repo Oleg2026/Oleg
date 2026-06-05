@@ -1,0 +1,2 @@
+# Bash-скрипты всегда с LF — иначе ломаются на Linux (bad interpreter ^M)
+*.sh text eol=lf
