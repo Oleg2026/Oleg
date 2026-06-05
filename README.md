@@ -1,6 +1,8 @@
 # autoXRAY - личный ВПН сервер
 Bash-скрипт для автоматической настройки ядра [Xray](https://github.com/XTLS/Xray-core). Предназначен для удобного получения актуальных конфигураций VPN для семейного/личного использования, настраивает selfsteal VLESS [XHTTP](https://github.com/XTLS/Xray-core/discussions/4113#discussioncomment-11468947) / [RAW](https://github.com/XTLS/REALITY/blob/main/README.en.md) REALITY.
 
+**UPD6: Добавлен скрипт `autoXRAY-udp.sh` — отдельный UDP-сервер (AmneziaWG + Hysteria2) против блокировок мобильного DPI. См. раздел [UDP-сервер против мобильного DPI](#udp-сервер-против-мобильного-dpi-amneziawg--hysteria2).**
+
 **UPD5: Добавлена тестовая сборка для подключения MTProto proxy FakeTLS - [readme-test.md](https://github.com/xVRVx/autoXRAY/blob/main/test/readme-test.md)** 
 
 **UPD4: Основной скрипт автоматически ставит WARP-cli.** 
@@ -207,6 +209,30 @@ bash -c "$(curl -L https://raw.githubusercontent.com/xVRVx/autoXRAY/main/old/aut
 После этого можно удалить WARP-cli, если это необходимо.
 
 **Если возникла ошбика при установке WARP** - [читайте инструкцию.](https://github.com/xVRVx/autoXRAY/blob/main/test/warp-readme.md)
+
+
+===========================================================================
+
+## UDP-сервер против мобильного DPI (AmneziaWG + Hysteria2)
+
+Мобильные операторы научились **поведенчески** блокировать TCP-REALITY/XHTTP. Характерный симптом: соединение работает несколько минут, потом рвётся, восстановление случайное (от минуты до часа). UDP-протоколы под это правило не попадают.
+
+Скрипт `autoXRAY-udp.sh` поднимает на **отдельном** чистом Debian 12 VPS сразу два устойчивых к мобильному DPI UDP-протокола:
+
+- **AmneziaWG** — обфусцированный WireGuard (UDP 51820);
+- **Hysteria2** — QUIC + обфускация Salamander + port-hopping по диапазону 20000–40000 (UDP).
+
+Нужен отдельный сервер с доменом (домен требуется для TLS-сертификата Let's Encrypt и сайта-маскировки):
+```bash
+bash -c "$(curl -L https://raw.githubusercontent.com/xVRVx/autoXRAY/main/autoXRAY-udp.sh)" -- udp.вашДОМЕН.com
+```
+
+По завершении скрипт выдаёт страницу подписки с QR-кодами и кнопками «Add to HAPP» для обоих протоколов. Конфиги импортируются в [Happ](https://www.happ.su/main/ru) (или AmneziaVPN).
+
+**Важно:**
+- Хостер должен **пропускать UDP**, а в фаерволе (если он включён) надо открыть `51820/udp` и `20000-40000/udp`.
+- Если у оператора всё равно режется UDP — расширьте диапазон port-hopping в `/etc/hysteria/config.yaml` и в правиле iptables, затем перезапустите ядро: `systemctl restart hysteria-server`.
+- Старые REALITY-конфиги из основного скрипта остаются рабочим запасным вариантом — клиент сам выберет тот путь, который проходит.
 
 
 ===========================================================================
